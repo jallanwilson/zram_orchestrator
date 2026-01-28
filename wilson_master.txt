@@ -1,0 +1,173 @@
+#!/bin/sh
+# ==============================================================================
+#  PROTOCOL: WILSON | ZRAM ORCHESTRATOR
+#  CODENAME: "The Ghost Architect"
+#  VERSION:  6.0 (Adaptive + Deceptive + Anti-Forensic)
+#  AUTHOR:   Skynet2029
+# ==============================================================================
+#  LICENSE: MIT
+# ==============================================================================
+
+# --- CONFIGURATION ---
+BASE_MOUNT="/mnt/zram_target"
+DECOY_MOUNT="/mnt/zram_decoy"
+ENTROPY_THRESHOLD=256
+
+# Portable Colors
+if [ -t 1 ]; then
+    RED='\033[0;31m'; GREEN='\033[0;32m'; BLUE='\033[1;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+else
+    RED=''; GREEN=''; BLUE=''; YELLOW=''; NC=''
+fi
+
+# Root Check
+if [ "$(id -u)" -ne 0 ]; then echo "${RED}[!] FATAL: Run as root.${NC}"; exit 1; fi
+if ! command -v cryptsetup >/dev/null 2>&1; then echo "${RED}[!] MISSING: cryptsetup${NC}"; exit 1; fi
+
+# --- HELPERS ---
+show_header() {
+    clear
+    echo "${BLUE}==================================================="
+    echo "   PROTOCOL: WILSON | GHOST ARCHITECT (v6.0)       "
+    echo "===================================================${NC}"
+}
+
+get_input() {
+    printf "    > %s: " "$1"
+    read -r $2
+}
+
+list_targets() {
+    echo "---------------------------------------------------"
+    echo "ACTIVE INFRASTRUCTURE:"
+    lsblk -o NAME,SIZE,TYPE,MOUNTPOINT | grep -E "zram|crypt"
+    echo "---------------------------------------------------"
+}
+
+# --- DECEPTION & TUNING ---
+
+mask_exec() {
+    # Cloaks process name in the process table via symlink redirection
+    REAL_BIN=$1
+    FAKE_NAME=$2
+    shift 2
+    TEMP_DIR=$(mktemp -d)
+    ln -s "$REAL_BIN" "$TEMP_DIR/$FAKE_NAME"
+    echo "${YELLOW}[i] CLOAKING: $REAL_BIN as $FAKE_NAME${NC}"
+    PATH="$TEMP_DIR:$PATH" "$FAKE_NAME" "$@"
+    rm -rf "$TEMP_DIR"
+}
+
+configure_zram_device() {
+    DEV_NAME=$1
+    DEV_BASE=${DEV_NAME#"/dev/"}
+    if [ ! -d "/sys/block/$DEV_BASE" ]; then sleep 1; fi
+
+    if [ -r /proc/meminfo ]; then
+        TOTAL_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+        TOTAL_GB=$((TOTAL_KB / 1024 / 1024))
+        SAFE_DEFAULT="$((TOTAL_GB / 3))G"
+        if [ "$SAFE_DEFAULT" = "0G" ]; then SAFE_DEFAULT="512M"; fi
+        echo "${YELLOW}[i] HOST RAM: ${TOTAL_GB}GB. SAFE ALLOCATION: ${SAFE_DEFAULT}.${NC}"
+    else
+        SAFE_DEFAULT="1G"
+    fi
+
+    get_input "Target Size (Default: $SAFE_DEFAULT)" INPUT_SIZE
+    T_SIZE=${INPUT_SIZE:-$SAFE_DEFAULT}
+    
+    echo "zstd" > "/sys/block/$DEV_BASE/comp_algorithm" 2>/dev/null
+    echo "$T_SIZE" > "/sys/block/$DEV_BASE/disksize"
+}
+
+# --- MODULES ---
+
+module_init_dual() {
+    echo "${BLUE}[+] PROVISIONING DUAL-REACTOR (GHOST + DECOY)...${NC}"
+    
+    # 1. The Decoy (Plausible Deniability)
+    Z_DECOY=$(zramctl --find)
+    configure_zram_device "$Z_DECOY"
+    mkfs.ext4 -O ^has_journal -L "DATA_BACKUP" "$Z_DECOY" >/dev/null 2>&1
+    mkdir -p "$DECOY_MOUNT"
+    mount "$Z_DECOY" "$DECOY_MOUNT"
+    echo "Snapshot: $(date)" > "$DECOY_MOUNT/backup_log.txt"
+    
+    # 2. The Ghost (Encrypted Black Site)
+    Z_SITE=$(zramctl --find)
+    configure_zram_device "$Z_SITE"
+    ID=$(echo "$Z_SITE" | grep -o '[0-9]*$')
+    MAPPER="wilson_crypt_$ID"
+    head -c 64 /dev/urandom | cryptsetup open --type plain "$Z_SITE" "$MAPPER" --key-file - --hash sha256 --key-size 512
+    mkfs.ext4 -O ^has_journal -m 0 "/dev/mapper/$MAPPER" >/dev/null 2>&1
+    mkdir -p "$BASE_MOUNT"
+    mount -o discard,noatime "/dev/mapper/$MAPPER" "$BASE_MOUNT"
+    
+    echo "${BLUE}[+] CLOAKED DUAL-STACK READY.${NC}"
+    get_input "Press Enter" DUMMY
+}
+
+module_colonize() {
+    list_targets
+    get_input "Enter Target ID" ID
+    MOUNT_PT=$(lsblk -n -o MOUNTPOINT "/dev/mapper/wilson_crypt_$ID" 2>/dev/null)
+    [ -z "$MOUNT_PT" ] && MOUNT_PT=$(lsblk -n -o MOUNTPOINT "/dev/zram$ID" 2>/dev/null)
+    
+    echo "[+] INITIALIZING THE VOID: $MOUNT_PT"
+    for d in bin sbin lib lib64 usr/bin usr/sbin usr/include proc sys tmp etc; do mkdir -p "$MOUNT_PT/$d"; done
+    for m in bin sbin lib lib64 usr/bin usr/sbin usr/include; do mount --bind "/$m" "$MOUNT_PT/$m"; done
+    mount -t sysfs sysfs "$MOUNT_PT/sys"
+    
+    # Isolation
+    echo "${RED}[+] SEVERING HOST TETHER...${NC}"
+    unshare -m -p -f --mount-proc="$MOUNT_PT/proc" chroot "$MOUNT_PT" /bin/bash
+    
+    # Cleanup Binds
+    umount -l "$MOUNT_PT/sys" "$MOUNT_PT/usr/include" "$MOUNT_PT/bin" 2>/dev/null
+    get_input "Void Terminated. Press Enter" DUMMY
+}
+
+module_guard() {
+    echo "${YELLOW}[i] MONITORING ENTROPY DRAIN (Threshold: $ENTROPY_THRESHOLD)...${NC}"
+    while true; do
+        if [ "$(cat /proc/sys/kernel/random/entropy_avail)" -lt "$ENTROPY_THRESHOLD" ]; then
+            echo "${RED}[!] ENTROPY COLLAPSE. EXECUTING BROWN-OUT.${NC}"
+            umount -l "$BASE_MOUNT" 2>/dev/null
+            cryptsetup close "$(lsblk -no NAME | grep wilson_crypt | head -1)" 2>/dev/null
+            exit 0
+        fi
+        sleep 5
+    done
+}
+
+module_purge() {
+    echo "${RED}[!] TOTAL AMNESIA INITIATED...${NC}"
+    umount -l "$BASE_MOUNT" "$DECOY_MOUNT" 2>/dev/null
+    for c in $(lsblk -no NAME | grep wilson_crypt); do
+        dd if=/dev/urandom of="/dev/mapper/$c" bs=1M count=10 >/dev/null 2>&1
+        cryptsetup close "$c"
+    done
+    for z in $(lsblk -no NAME | grep zram); do zramctl --reset "/dev/$z" 2>/dev/null; done
+    echo "${BLUE}[+] SYSTEM PURGED.${NC}"
+    get_input "Press Enter" DUMMY
+}
+
+# --- MAIN ---
+while true; do
+    show_header
+    echo "1. [INIT]    Dual Reactor (Ghost + Decoy)"
+    echo "2. [VOID]    Colonize RAM (Namespace Isolation)"
+    echo "3. [CLOAK]   Masked Execution"
+    echo "4. [GUARD]   Entropy Brown-Out"
+    echo "5. [PURGE]   Total Amnesia"
+    echo "6. [EXIT]    Disconnect"
+    get_input "Select Protocol" OPT
+    case $OPT in
+        1) module_init_dual ;;
+        2) module_colonize ;;
+        3) get_input "Binary" B; get_input "Fake" F; mask_exec "$B" "$F" ;;
+        4) module_guard ;;
+        5) module_purge ;;
+        6) exit 0 ;;
+    esac
+done
