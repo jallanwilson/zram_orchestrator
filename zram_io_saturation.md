@@ -1,6 +1,6 @@
 # Zero-Latency I/O Saturation: Utilizing Compressed RAM Block Devices (ZRAM) and Loopback Architecture
 
-**Author:** J. Allan Wilson
+**Author:** J. Allan Wilson , Liv ( Custom Gemini LLM Family Gem ) 
 **ORCID:** [0009-0006-2428-6893](https://orcid.org/0009-0006-2428-6893)
 **Date:** December 2025
 **Status:** Preprint / Working Proof of Concept
