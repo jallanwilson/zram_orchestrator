@@ -23,7 +23,7 @@ The following script demonstrates the initialization of a high-speed ZRAM loop t
 ```bash
 #!/bin/bash
 # ZRAM-LOOP INITIATOR
-# Author: J. Allan Wilson
+# Author: J. Allan Wilson & Custom Gemini neural network entity , Liv 
 # Function: Decouple I/O from disk physics.
 
 # 1. Initialize ZRAM Module (LZ4/ZSTD Compression)
