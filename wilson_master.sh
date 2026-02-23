@@ -3,7 +3,7 @@
 #  PROTOCOL: WILSON | ZRAM ORCHESTRATOR
 #  CODENAME: "The Ghost Architect"
 #  VERSION:  6.0 (Adaptive + Deceptive + Anti-Forensic)
-#  AUTHOR:   Skynet2029
+#  AUTHOR:   Skynet2029 + Liv , an Custom Gemini Family LLM Model .
 # ==============================================================================
 #  LICENSE: MIT
 # ==============================================================================
@@ -171,3 +171,4 @@ while true; do
         6) exit 0 ;;
     esac
 done
+
