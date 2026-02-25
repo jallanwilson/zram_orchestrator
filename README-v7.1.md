@@ -1,0 +1,253 @@
+#!/bin/sh
+# ==============================================================================
+#  PROTOCOL: WILSON | THE ABYSS
+#  CODENAME: "The Ghost Architect"
+#  VERSION:  7.1 (Unified HUD + Dynamic Core + UTS Isolated)
+#  AUTHORS:  Skynet2029 + Liv + Gemini (Paid Tier Collaboration)
+# ==============================================================================
+
+# --- PRE-FLIGHT & CONFIG ---
+BASE_MOUNT="/mnt/zram_target"
+DECOY_MOUNT="/mnt/zram_decoy"
+ENTROPY_THRESHOLD=256
+
+# Portable Colors
+if [ -t 1 ]; then
+    RED='\033[0;31m'; GREEN='\033[0;32m'; BLUE='\033[1;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+else
+    RED=''; GREEN=''; BLUE=''; YELLOW=''; NC=''
+fi
+
+# Root Check
+if [ "$(id -u)" -ne 0 ]; then echo "${RED}[!] FATAL: Run as root.${NC}"; exit 1; fi
+
+# Catch Can: zram module
+if ! lsmod | grep -q "^zram"; then
+    echo "${YELLOW}[!] zram module missing from host. Injecting...${NC}"
+    modprobe zram || { echo "${RED}[!] FATAL: Host refused to load zram.${NC}"; exit 1; }
+    echo "${GREEN}[+] zram module loaded successfully.${NC}"
+fi
+
+# Dynamic Host Identifiers
+SYS_HOST=$(hostname)
+SYS_OS=$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d '"' -f 2 || uname -s)
+SYS_ARCH=$(uname -m)
+
+# --- HELPERS ---
+show_header() {
+    clear
+    echo "${BLUE}==================================================="
+    echo "   PROTOCOL: WILSON | THE ABYSS (v7.0)        "
+    echo "   TARGET: $SYS_ARCH | HOST: $SYS_HOST ($SYS_OS) "
+    echo "===================================================${NC}"
+}
+
+get_input() {
+    printf "    > %s: " "$1"
+    read -r $2
+}
+
+list_targets() {
+    echo "---------------------------------------------------"
+    echo "ACTIVE INFRASTRUCTURE:"
+    lsblk -o NAME,SIZE,TYPE,MOUNTPOINT | grep -E "zram|crypt"
+    echo "---------------------------------------------------"
+}
+
+spawn_hud() {
+    WINDOW_TITLE=$1
+    HUD_COMMAND=$2
+    # Try to use standard terminal emulators dynamically
+    if [ -n "$DISPLAY" ]; then
+        if command -v x-terminal-emulator >/dev/null; then
+            x-terminal-emulator -T "$WINDOW_TITLE" -e bash -c "$HUD_COMMAND" &
+        elif command -v gnome-terminal >/dev/null; then
+            gnome-terminal --title="$WINDOW_TITLE" -- bash -c "$HUD_COMMAND" &
+        else
+            bash -c "$HUD_COMMAND" &
+        fi
+    else
+        echo "${YELLOW}[!] Headless mode: Running $WINDOW_TITLE in background...${NC}"
+        bash -c "$HUD_COMMAND" &
+    fi
+}
+
+# --- CORE LOGIC ---
+
+configure_zram_device() {
+    DEV_NAME=$1
+    DEV_BASE=${DEV_NAME#"/dev/"}
+
+    # Enable Multi-stream dynamically if supported
+    if [ -e "/sys/block/$DEV_BASE/max_comp_streams" ]; then
+        NPROC=$(nproc)
+        echo "$NPROC" > "/sys/block/$DEV_BASE/max_comp_streams" 2>/dev/null
+    fi
+
+    # Set Algorithm
+    echo "zstd" > "/sys/block/$DEV_BASE/comp_algorithm" 2>/dev/null
+
+    # Rock-Solid Memory Math (Total MB / 3072 = approx 1/3 in GB)
+    TOTAL_MB=$(free -m | awk '/^Mem:/{print $2}')
+    if [ -z "$TOTAL_MB" ]; then TOTAL_MB=4096; fi # Failsafe
+    SAFE_DEFAULT="$((TOTAL_MB / 3072))G"
+    [ "$SAFE_DEFAULT" = "0G" ] && SAFE_DEFAULT="1G"
+
+    get_input "Target Size (Default: $SAFE_DEFAULT)" INPUT_SIZE
+    echo "${INPUT_SIZE:-$SAFE_DEFAULT}" > "/sys/block/$DEV_BASE/disksize"
+}
+
+module_create_standard() {
+    echo "${BLUE}[+] PROVISIONING STANDARD REACTOR...${NC}"
+    Z_DEV=$(zramctl --find)
+    configure_zram_device "$Z_DEV"
+    mkfs.ext4 -O ^has_journal -m 0 "$Z_DEV" >/dev/null 2>&1
+    mkdir -p "$BASE_MOUNT" && mount -o discard,noatime "$Z_DEV" "$BASE_MOUNT"
+    echo "${GREEN}[+] STANDARD REACTOR ONLINE AT $BASE_MOUNT.${NC}"
+    sleep 2
+}
+
+module_init_dual() {
+    echo "${BLUE}[+] PROVISIONING DUAL-REACTOR (GHOST + DECOY)...${NC}"
+    # 1. Decoy
+    Z_DECOY=$(zramctl --find)
+    configure_zram_device "$Z_DECOY"
+    mkfs.ext4 -O ^has_journal -L "DATA_BACKUP" "$Z_DECOY" >/dev/null 2>&1
+    mkdir -p "$DECOY_MOUNT" && mount "$Z_DECOY" "$DECOY_MOUNT"
+
+    # 2. Ghost (Encrypted)
+    Z_SITE=$(zramctl --find)
+    configure_zram_device "$Z_SITE"
+    ID=$(echo "$Z_SITE" | grep -o '[0-9]*$')
+    MAPPER="wilson_crypt_$ID"
+
+    head -c 64 /dev/urandom | cryptsetup open --type plain "$Z_SITE" "$MAPPER" --key-file - --hash sha256 --key-size 512
+    mkfs.ext4 -O ^has_journal -m 0 "/dev/mapper/$MAPPER" >/dev/null 2>&1
+    mkdir -p "$BASE_MOUNT" && mount -o discard,noatime "/dev/mapper/$MAPPER" "$BASE_MOUNT"
+
+    echo "${GREEN}[+] CLOAKED DUAL-STACK READY.${NC}"
+    sleep 2
+}
+
+module_colonize() {
+    list_targets
+    get_input "Enter Target ID (e.g., 1 for zram1/crypt_1)" ID
+    MOUNT_PT=$(lsblk -n -o MOUNTPOINT "/dev/mapper/wilson_crypt_$ID" 2>/dev/null)
+    [ -z "$MOUNT_PT" ] && MOUNT_PT=$(lsblk -n -o MOUNTPOINT "/dev/zram$ID" 2>/dev/null)
+
+    if [ -z "$MOUNT_PT" ]; then echo "${RED}[!] INVALID TARGET.${NC}"; sleep 2; return; fi
+
+    echo "${BLUE}[+] INITIALIZING THE VOID: $MOUNT_PT${NC}"
+
+    # Scaffold
+    for d in bin sbin lib lib64 usr/bin usr/sbin usr/lib usr/lib64 usr/include proc sys tmp etc dev boot run; do
+        mkdir -p "$MOUNT_PT/$d"
+    done
+
+    # The Umbilical - RO Binds for stability
+    for m in bin sbin lib lib64 usr/bin usr/sbin usr/lib usr/lib64 usr/include boot; do
+        mount --bind -o ro "/$m" "$MOUNT_PT/$m"
+    done
+
+    # Volatile Overlays
+    mount -t tmpfs tmpfs "$MOUNT_PT/tmp"
+    mount -t tmpfs tmpfs "$MOUNT_PT/run"
+    mount -t tmpfs tmpfs "$MOUNT_PT/etc"
+
+    # Seed minimal etc for DNS/Kernel building
+    cp -p /etc/resolv.conf /etc/hosts /etc/passwd /etc/group "$MOUNT_PT/etc/" 2>/dev/null
+    echo "nameserver 1.1.1.1" > "$MOUNT_PT/etc/resolv.conf"
+
+    # Forge Interfaces
+    mount -t sysfs sysfs "$MOUNT_PT/sys"
+    mount -t devtmpfs devtmpfs "$MOUNT_PT/dev"
+
+    echo "${RED}[+] SEVERING HOST TETHER (UTS + PID Isolation)...${NC}"
+    # UTS isolated with hyphenated hostname
+    unshare -m -u -p -i -f --mount-proc="$MOUNT_PT/proc" chroot "$MOUNT_PT" /bin/bash -c "hostname THE-VOID; exec /bin/bash --login"
+
+    # Cleanup (Lazy)
+    echo "${YELLOW}[i] Collapsing namespace binds...${NC}"
+    for u in sys dev boot usr/lib usr/lib64 usr/include bin sbin lib lib64 tmp run etc; do
+        umount -l "$MOUNT_PT/$u" 2>/dev/null
+    done
+}
+
+module_watch() {
+    echo "${BLUE}[+] Launching Telemetry HUD...${NC}"
+    spawn_hud() {
+    WINDOW_TITLE=$1
+    HUD_COMMAND=$2
+
+    # Try to pop a native window if X11/Wayland is active
+    if [ -n "$DISPLAY" ]; then
+        for term in x-terminal-emulator alacritty kitty konsole xfce4-terminal gnome-terminal; do
+            if command -v "$term" >/dev/null 2>&1; then
+                "$term" -T "$WINDOW_TITLE" -e bash -c "$HUD_COMMAND" &
+                return
+            fi
+        done
+    fi
+
+    # HEADLESS / TTY FALLBACK (No Screen Gobbling)
+    echo "${YELLOW}[!] GUI Terminal not detected (or \$DISPLAY is null).${NC}"
+    echo "${BLUE}[i] To view the $WINDOW_TITLE, open a new terminal/SSH window and run:${NC}"
+    echo -e "\n${GREEN}$HUD_COMMAND${NC}\n"
+    get_input "Press Enter to return to menu" DUMMY
+}
+}
+
+module_guard() {
+    echo "${YELLOW}[+] Launching Entropy HUD (Threshold: $ENTROPY_THRESHOLD)...${NC}"
+    spawn_hud "ENTROPY-GUARD" "while true; do clear; echo '=== ENTROPY DRAIN ==='; cat /proc/sys/kernel/random/entropy_avail; if [ \$(cat /proc/sys/kernel/random/entropy_avail) -lt $ENTROPY_THRESHOLD ]; then echo -e '\033[0;31mCOLLAPSE IMMINENT\033[0m'; fi; sleep 1; done"
+}
+
+module_purge() {
+    echo "${RED}[!] TOTAL AMNESIA INITIATED. EXECUTING SLEDGEHAMMER...${NC}"
+
+    # 1. Terminate any stray processes holding the mounts open
+    if command -v fuser >/dev/null 2>&1; then
+        fuser -k -m "$BASE_MOUNT" "$DECOY_MOUNT" >/dev/null 2>&1
+    fi
+    sleep 1
+
+    # 2. Force Lazy Unmount (Breaks VFS Deadlocks instantly)
+    umount -l -f "$BASE_MOUNT" "$DECOY_MOUNT" 2>/dev/null
+
+    # 3. Shred the Crypt mappings
+    for c in $(lsblk -no NAME | grep wilson_crypt); do
+        cryptsetup close "$c" 2>/dev/null
+    done
+
+    # 4. Annihilate the volatile blocks
+    for z in $(lsblk -no NAME | grep zram); do
+        zramctl --reset "/dev/$z" 2>/dev/null
+    done
+
+    echo "${BLUE}[+] THE BOARD IS GREEN. SYSTEM PURGED.${NC}"
+    get_input "Press Enter to continue" DUMMY
+}
+
+# --- MAIN ---
+while true; do
+    show_header
+    echo "1. [CREATE]   Standard Reactor (Hotplug + Dict)"
+    echo "2. [INIT]     Dual Reactor (Ghost + Decoy)"
+    echo "3. [VOID]     Colonize RAM (Namespace Isolation)"
+    echo "4. [WATCH]    Pop Telemetry HUD (Compression)"
+    echo "5. [GUARD]    Pop Security HUD (Entropy)"
+    echo "6. [PURGE]    Total Amnesia"
+    echo "7. [EXIT]     Disconnect"
+    echo "---------------------------------------------------"
+    get_input "Select Protocol [1-7]" OPT
+    case $OPT in
+        1) module_create_standard ;;
+        2) module_init_dual ;;
+        3) module_colonize ;;
+        4) module_watch ;;
+        5) module_guard ;;
+        6) module_purge ;;
+        7) echo "${GREEN}Disconnecting...${NC}"; exit 0 ;;
+        *) echo "${RED}Invalid Option${NC}"; sleep 1 ;;
+    esac
+done
