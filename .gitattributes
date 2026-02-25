@@ -1,0 +1,4 @@
+# Force Unix line endings for all shell scripts, no matter what the OS thinks
+echo "*.sh text eol=lf" > .gitattributes
+git add .gitattributes
+git commit -m "SHIELD: Prevented DOS line-ending corruption"
